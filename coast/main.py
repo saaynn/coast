@@ -182,9 +182,7 @@ class CloseTicketView(ui.View):
         else:
             await interaction.response.send_message("This is not a ticket channel.", ephemeral=True)
 
-# Add the persistent view *before* the bot runs
-bot.add_view(TicketView())
-bot.add_view(CloseTicketView())
+
 
 @bot.command()
 @commands.has_permissions(manage_channels=True)
@@ -227,6 +225,9 @@ async def close(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     # You only need to sync once, then you can comment this out.
+    # Add the persistent view *before* the bot runs
+    bot.add_view(TicketView())
+    bot.add_view(CloseTicketView())
     # Leaving it un-commented is fine, but can be slow.
     await bot.tree.sync() 
     print(f"Bot connected as {bot.user}")
