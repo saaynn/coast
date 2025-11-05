@@ -5,6 +5,11 @@ from discord import app_commands, ui
 import os
 from dotenv import load_dotenv
 
+# --- IMPORTS FOR RENDER KEEP-ALIVE ---
+from flask import Flask
+from threading import Thread
+# -------------------------------------
+
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
@@ -15,6 +20,24 @@ INTENTS.members = True
 EMBED_COLOR = 0x00ff00
 
 bot = commands.Bot(command_prefix="?", intents=INTENTS)
+
+# --- WEB SERVER FOR RENDER KEEP-ALIVE ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "I'm alive!" # This is what UptimeRobot will see
+
+def run():
+  # Render uses port 8080, but can also auto-assign with PORT env var
+  port = int(os.environ.get('PORT', 8080))
+  app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+# -----------------------------------------
+
 
 # --- Moderation Commands (slash and prefix) ---
 
@@ -89,9 +112,11 @@ async def clear(ctx, amount: int = 5):
 @app_commands.describe(amount="Number of messages to delete")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def clear(interaction: discord.Interaction, amount: int = 5):
-    await interaction.channel.purge(limit=amount+1)
-    embed = discord.Embed(title="Messages Cleared", color=EMBED_COLOR, description=f"{amount} messages deleted.")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    # Defer response to avoid "interaction failed" on longer purges
+    await interaction.response.defer(ephemeral=True) 
+    deleted = await interaction.channel.purge(limit=amount) # Purge, +1 not needed for slash
+    embed = discord.Embed(title="Messages Cleared", color=EMBED_COLOR, description=f"{len(deleted)} messages deleted.")
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 # --- Ticket Panel System ---
 
@@ -101,23 +126,65 @@ class TicketView(ui.View):
 
     @ui.button(label="Create Ticket", style=discord.ButtonStyle.primary, custom_id="create_ticket")
     async def create_ticket(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.defer(ephemeral=True) # Defer for channel creation
         guild = interaction.guild
+        
+        # Check if user already has a ticket
+        ticket_name = f"ticket-{interaction.user.name}"
+        existing_channel = discord.utils.get(guild.text_channels, name=ticket_name)
+        
+        if existing_channel:
+            await interaction.followup.send("You already have an open ticket!", ephemeral=True)
+            return
+
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
         }
+        
         category = discord.utils.get(guild.categories, name="Tickets")
         if not category:
-            category = await guild.create_category("Tickets")
-        ticket_channel = await guild.create_text_channel(f"ticket-{interaction.user.name}", overwrites=overwrites, category=category)
+            try:
+                category = await guild.create_category("Tickets")
+            except discord.Forbidden:
+                await interaction.followup.send("Error: Bot needs 'Manage Channels' permission to create a ticket category.", ephemeral=True)
+                return
 
+        try:
+            ticket_channel = await guild.create_text_channel(
+                ticket_name,
+                overwrites=overwrites,
+                category=category
+            )
+        except discord.Forbidden:
+            await interaction.followup.send("Error: Bot needs 'Manage Channels' permission to create a ticket.", ephemeral=True)
+            return
+        
         embed = discord.Embed(
             title="Ticket Opened",
             color=EMBED_COLOR,
-            description="Your ticket has been created. A staff member will be with you soon."
+            description="Your ticket has been created. A staff member will be with you soon.\nClick the button below to close this ticket."
         )
-        await ticket_channel.send(f"{interaction.user.mention}", embed=embed)
-        await interaction.response.send_message("Ticket created! Check your new channel.", ephemeral=True)
+        # Add a close button to the new ticket channel
+        await ticket_channel.send(f"{interaction.user.mention}", embed=embed, view=CloseTicketView())
+        await interaction.followup.send(f"Ticket created! Check {ticket_channel.mention}", ephemeral=True)
+
+# --- View with a "Close" button for inside the ticket ---
+class CloseTicketView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, custom_id="close_ticket_button")
+    async def close_ticket(self, interaction: discord.Interaction, button: ui.Button):
+        if "ticket-" in interaction.channel.name:
+            await interaction.response.send_message("Closing this ticket...")
+            await interaction.channel.delete(reason=f"Ticket closed by {interaction.user}")
+        else:
+            await interaction.response.send_message("This is not a ticket channel.", ephemeral=True)
+
+# Add the persistent view *before* the bot runs
+bot.add_view(TicketView())
+bot.add_view(CloseTicketView())
 
 @bot.command()
 @commands.has_permissions(manage_channels=True)
@@ -142,12 +209,16 @@ async def ticket(interaction: discord.Interaction):
 @bot.command()
 async def close(ctx):
     if "ticket-" in ctx.channel.name:
-        await ctx.channel.delete()
+        await ctx.channel.delete(reason=f"Ticket closed by {ctx.author}")
+    else:
+        await ctx.send("This is not a ticket channel.")
+
 
 @bot.tree.command(description="Close a ticket")
 async def close(interaction: discord.Interaction):
     if "ticket-" in interaction.channel.name:
-        await interaction.channel.delete()
+        await interaction.response.send_message("Closing this ticket...")
+        await interaction.channel.delete(reason=f"Ticket closed by {interaction.user}")
     else:
         await interaction.response.send_message("This is not a ticket channel.", ephemeral=True)
 
@@ -155,7 +226,16 @@ async def close(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
+    # You only need to sync once, then you can comment this out.
+    # Leaving it un-commented is fine, but can be slow.
+    await bot.tree.sync() 
     print(f"Bot connected as {bot.user}")
 
-bot.run(TOKEN)
+# --- RUN THE BOT AND SERVER ---
+if __name__ == "__main__":
+    if TOKEN is None:
+        print("Error: TOKEN environment variable not set.")
+        print("Make sure you have a .env file or set it in your host's environment variables.")
+    else:
+        keep_alive() # Start the web server thread
+        bot.run(TOKEN) # Start the bot
