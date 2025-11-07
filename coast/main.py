@@ -167,28 +167,6 @@ async def avatar(interaction: discord.Interaction, member: discord.Member = None
     embed.timestamp = datetime.datetime.now()
     await interaction.response.send_message(embed=embed)
 
-@bot.command()
-async def help(ctx):
-    embed = discord.Embed(title="Bot Commands", description="Here are the available commands:", color=EMBED_COLOR)
-    
-    embed.add_field(name="Moderation", value="`/kick`, `/ban`, `/mute`, `/timeout`, `/unmute`, `/clear`", inline=False)
-    embed.add_field(name="Tickets", value="`/ticket` (sends panel), `/close` (closes a ticket)", inline=False)
-    embed.add_field(name="Admin", value="`/lock`, `/unlock`, `/lockdown`, `/ar set`, `/ar off`, `/setstatus`", inline=False)
-    embed.add_field(name="Utility", value="`/avatar`, `/help`", inline=False)
-    
-    await ctx.send(embed=embed)
-
-@bot.tree.command(description="Show the bot's help message")
-async def help(interaction: discord.Interaction):
-    embed = discord.Embed(title="Bot Commands", description="Here are the available commands:", color=EMBED_COLOR)
-    
-    embed.add_field(name="Moderation", value="`/kick`, `/ban`, `/mute`, `/timeout`, `/unmute`, `/clear`", inline=False)
-    embed.add_field(name="Tickets", value="`/ticket` (sends panel), `/close` (closes a ticket)", inline=False)
-    embed.add_field(name="Admin", value="`/lock`, `/unlock`, `/lockdown`, `/ar set`, `/ar off`, `/setstatus`", inline=False)
-    embed.add_field(name="Utility", value="`/avatar`, `/help`", inline=False)
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
 # --- NEW: Admin Commands ---
 
 @bot.command()
