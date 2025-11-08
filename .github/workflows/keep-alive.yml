@@ -1,0 +1,14 @@
+name: Keep-Alive-Ping
+
+on:
+  schedule:
+    # Runs "at minute 0 and 30" (e.g., 1:00, 1:30, 2:00) every hour
+    - cron: '*/14 * * * *'
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render Service
+        # Replace YOUR_RENDER_URL with your bot's actual URL
+        run: curl -s "https://coast-cr6f.onrender.com" > /dev/null
