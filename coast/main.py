@@ -538,6 +538,47 @@ async def on_member_join(member):
         except Exception as e:
             print(f"Error during autorole: {e}")
 
+# --- ADMIN-ONLY EMBED CREATOR ---
+
+class EmbedModal(ui.Modal, title="Admin Embed Creator"):
+    # Define the inputs for the pop-up window
+    embed_title = ui.TextInput(label="Title", placeholder="Enter the heading here...", required=True)
+    description = ui.TextInput(label="Description", style=discord.TextStyle.paragraph, placeholder="Enter your message here...", required=True, max_length=2000)
+    image_url = ui.TextInput(label="Image URL", placeholder="Optional: https://link-to-image.png", required=False)
+    footer = ui.TextInput(label="Footer", placeholder="Optional: Small text at the bottom", required=False)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Create the embed using the inputs
+        embed = discord.Embed(
+            title=self.embed_title.value,
+            description=self.description.value,
+            color=EMBED_COLOR,
+            timestamp=datetime.datetime.now()
+        )
+        
+        if self.image_url.value:
+            if self.image_url.value.startswith("http"):
+                embed.set_image(url=self.image_url.value)
+        
+        if self.footer.value:
+            embed.set_footer(text=self.footer.value)
+
+        await interaction.response.send_message("✅ Admin embed sent!", ephemeral=True)
+        await interaction.channel.send(embed=embed)
+
+@bot.tree.command(description="Send a custom embed (Admin Only)")
+@app_commands.checks.has_permissions(administrator=True) # <-- Changed to Administrator
+async def embed(interaction: discord.Interaction):
+    """Opens a form to create and send an embed - Only for Admins"""
+    await interaction.response.send_modal(EmbedModal())
+
+# Optional: Adding an error handler so the user gets a message if they aren't an admin
+@embed.error
+async def embed_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ You do not have **Administrator** permissions to use this command.", ephemeral=True)
+
+# -----------------------------
 # --- RUN THE BOT AND SERVER ---
 if __name__ == "__main__":
     if TOKEN is None:
