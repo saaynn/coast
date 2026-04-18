@@ -1,0 +1,14 @@
+name: Coastguard-Heartbeat
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: 
+
+jobs:
+  ping_render:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Wake Up Coastguard
+      run: |
+        curl -i --connect-timeout 30 --retry 2 "https://coast-d9he.onrender.com/"
