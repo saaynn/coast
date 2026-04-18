@@ -8,6 +8,7 @@ import time
 import math
 import random
 import asyncio
+import requests  # Required for the Heartbeat
 from collections import defaultdict
 from dotenv import load_dotenv
 from flask import Flask
@@ -29,11 +30,7 @@ INTENTS.voice_states = True
 EMBED_COLOR = 0xbebbd0
 LOG_CHANNEL_ID = 1492512166090248293 
 TARGET_VC_ID = 1385261169924902972  
-
-LEVEL_ROLES = {
-    5: 111111111111111111, # Replace with actual IDs
-    10: 222222222222222222
-}
+URL = "https://coast-d9he.onrender.com/" # Your Render URL
 
 # --- TRACKERS ---
 spam_tracker = defaultdict(list)
@@ -45,7 +42,7 @@ sticky_messages = {} # {channel_id: {"content": str, "last_id": int}}
 bot = commands.Bot(command_prefix="?", intents=INTENTS, help_command=None)
 
 # ==========================================
-# 🌐 WEB SERVER (RENDER KEEP-ALIVE)
+# 🌐 WEB SERVER & INTERNAL HEARTBEAT
 # ==========================================
 app = Flask('')
 @app.route('/')
@@ -58,8 +55,16 @@ def run():
 def keep_alive():
     Thread(target=run).start()
 
+@tasks.loop(minutes=4)
+async def internal_self_ping():
+    """Keeps the internal process active to prevent throttling"""
+    try:
+        requests.get(URL)
+    except Exception as e:
+        print(f"Internal Heartbeat Error: {e}")
+
 # ==========================================
-# 🎫 TICKET SYSTEM CLASSES (Must be defined before on_ready)
+# 🎫 TICKET SYSTEM CLASSES
 # ==========================================
 
 class TicketChannelView(ui.View):
@@ -77,7 +82,6 @@ class TicketChannelView(ui.View):
     async def claim_ticket(self, interaction: discord.Interaction, button: ui.Button):
         if not interaction.user.guild_permissions.manage_messages:
             return await interaction.response.send_message("Staff only.", ephemeral=True)
-        
         embed = discord.Embed(title="Ticket Claimed", description=f"Claimed by {interaction.user.mention}.", color=EMBED_COLOR)
         await interaction.response.send_message(embed=embed)
         button.disabled = True
@@ -88,14 +92,12 @@ class TicketChannelView(ui.View):
     async def lock_ticket(self, interaction: discord.Interaction, button: ui.Button):
         if not interaction.user.guild_permissions.manage_channels:
             return await interaction.response.send_message("Staff only.", ephemeral=True)
-        
         for target in interaction.channel.overwrites:
             if isinstance(target, discord.Member) and target != interaction.channel.guild.me:
                 if not target.guild_permissions.manage_channels:
                     overwrite = interaction.channel.overwrites_for(target)
                     overwrite.send_messages = False
                     await interaction.channel.set_permissions(target, overwrite=overwrite)
-        
         embed = discord.Embed(title="Ticket Locked", description=f"Locked by {interaction.user.mention}.", color=EMBED_COLOR)
         await interaction.response.send_message(embed=embed)
 
@@ -108,40 +110,15 @@ class TicketPanelModal(ui.Modal, title="Create Ticket Panel"):
     async def on_submit(self, interaction: discord.Interaction):
         if not self.category_id.value.isdigit():
             return await interaction.response.send_message("Error: Category ID must be numbers.", ephemeral=True)
-        
         embed = discord.Embed(title=self.panel_title.value, description=self.panel_desc.value, color=EMBED_COLOR)
         view = ui.View(timeout=None)
         btn = ui.Button(label=self.button_label.value, style=discord.ButtonStyle.primary, custom_id=f"dyn_ticket_{self.category_id.value}")
         view.add_item(btn)
-        
         await interaction.response.send_message("Panel created!", ephemeral=True)
         await interaction.channel.send(embed=embed, view=view)
 
 # ==========================================
-# 📡 SONAR LOGGING
-# ==========================================
-async def send_log(guild, embed):
-    log_channel = guild.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        embed.timestamp = discord.utils.utcnow()
-        await log_channel.send(embed=embed)
-
-async def get_mod(guild, action):
-    async for entry in guild.audit_logs(limit=1, action=action):
-        return entry.user
-    return "Unknown"
-
-@bot.event
-async def on_message_delete(message):
-    if message.author.bot: return
-    embed = discord.Embed(title="Message Deleted", color=discord.Color.red())
-    embed.add_field(name="Author", value=message.author.mention, inline=True)
-    embed.add_field(name="Channel", value=message.channel.mention, inline=True)
-    embed.add_field(name="Content", value=message.content[:1024] or "None", inline=False)
-    await send_log(message.guild, embed)
-
-# ==========================================
-# 🛡️ PROTECTION, XP & INTERACTION
+# 🛡️ PROTECTION & EVENT LOGIC
 # ==========================================
 @bot.event
 async def on_message(message):
@@ -220,7 +197,7 @@ async def on_voice_state_update(member, before, after):
         except: pass
 
 # ==========================================
-# 🚀 HYBRID COMMANDS (Moderation & Utility)
+# 🚀 HYBRID COMMANDS
 # ==========================================
 
 @bot.hybrid_command(name="kick")
@@ -254,6 +231,12 @@ async def clear(ctx, amount: int = 5):
     await ctx.channel.purge(limit=limit)
     await ctx.send(f"🧹 Cleared {amount} messages.", delete_after=3)
 
+@bot.hybrid_command(name="slow")
+@commands.has_permissions(manage_channels=True)
+async def slow(ctx, seconds: int):
+    await ctx.channel.edit(slowmode_delay=seconds)
+    await ctx.send(f"⚓ Slowmode set to {seconds}s.")
+
 @bot.hybrid_command(name="setstatus")
 @app_commands.choices(status=[app_commands.Choice(name="Online", value="online"), app_commands.Choice(name="Idle", value="idle"), app_commands.Choice(name="DND", value="dnd")])
 @commands.has_permissions(administrator=True)
@@ -281,6 +264,15 @@ async def sticky(ctx, *, text: str):
     msg = await ctx.send(embed=discord.Embed(description=text, color=EMBED_COLOR))
     sticky_messages[ctx.channel.id] = {"content": text, "last_id": msg.id}
     await ctx.send("Sticky active.", ephemeral=True)
+
+@bot.hybrid_command(name="unsticky")
+@commands.has_permissions(administrator=True)
+async def unsticky(ctx):
+    if ctx.channel.id in sticky_messages:
+        del sticky_messages[ctx.channel.id]
+        await ctx.send("⚓ Sticky message disabled.")
+    else:
+        await ctx.send("No sticky message found.", ephemeral=True)
 
 @bot.hybrid_command(name="remind")
 async def remind(ctx, time_amount: int, unit: str, *, task: str):
@@ -312,8 +304,8 @@ async def panel(ctx):
 @bot.hybrid_command(name="help")
 async def help(ctx):
     e = discord.Embed(title="Coastguard Help", color=EMBED_COLOR)
-    e.add_field(name="🛡️ Mod", value="`kick`, `ban`, `mute`, `unmute`, `clear`", inline=False)
-    e.add_field(name="⚙️ Utility", value="`panic`, `sticky`, `setstatus`, `remind`, `panel`")
+    e.add_field(name="🛡️ Mod", value="`kick`, `ban`, `mute`, `unmute`, `clear`, `slow`", inline=False)
+    e.add_field(name="⚙️ Utility", value="`panic`, `sticky`, `unsticky`, `setstatus`, `remind`, `panel`")
     e.add_field(name="👤 General", value="`rank`, `avatar`, `help`")
     await ctx.send(embed=e)
 
@@ -322,6 +314,8 @@ async def help(ctx):
 # ==========================================
 @bot.event
 async def on_ready():
+    if not internal_self_ping.is_running():
+        internal_self_ping.start()
     bot.add_view(TicketChannelView()) 
     await bot.tree.sync()
     print(f"Coastguard online: {bot.user}")
