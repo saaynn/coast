@@ -2,13 +2,12 @@ name: Keep-Alive-Ping
 
 on:
   schedule:
-    # Runs "at minute 0 and 30" (e.g., 1:00, 1:30, 2:00) every hour
-    - cron: '*/14 * * * *'
+    - cron: '*/5 * * * *' # Pings every 5 minutes instead of 14
+  workflow_dispatch:      # Allows you to click a button to test it manually
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
       - name: Ping Render Service
-        # Replace YOUR_RENDER_URL with your bot's actual URL
-        run: curl -s "https://coast-d9he.onrender.com" > /dev/null
+        run: curl -s "https://coast-d9he.onrender.com"
