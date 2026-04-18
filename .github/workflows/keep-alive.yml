@@ -11,4 +11,4 @@ jobs:
     steps:
       - name: Ping Render Service
         # Replace YOUR_RENDER_URL with your bot's actual URL
-        run: curl -s "https://coast-cr6f.onrender.com" > /dev/null
+        run: curl -s "https://coast-d9he.onrender.com" > /dev/null
