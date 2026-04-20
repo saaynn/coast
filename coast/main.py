@@ -41,10 +41,10 @@ message_counts = defaultdict(int)
 temp_vcs = set()
 sticky_messages = {}
 
-# Dynamic Systems Memory (In a real production environment, use a database like SQLite/PostgreSQL)
-auto_responses = {} # Format: {"trigger_word": "response text"}
-auto_reactions = {} # Format: {"trigger_word": "emoji_string"}
-privileged_roles = set() # Roles allowed to use /dm and /announce
+# Dynamic Systems Memory
+auto_responses = {} 
+auto_reactions = {} 
+privileged_roles = set() 
 
 bot = commands.Bot(command_prefix="?", intents=INTENTS, help_command=None)
 
@@ -150,13 +150,20 @@ def has_comm_access(user: discord.Member):
     return any(r in privileged_roles for r in user_roles)
 
 # ==========================================
-# LOGGING SYSTEM
+# LOGGING SYSTEM (Upgraded Diagnostics)
 # ==========================================
 async def send_log(guild, embed):
-    log_channel = guild.get_channel(LOG_CHANNEL_ID)
+    log_channel = guild.get_channel(LOG_CHANNEL_ID) or bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        embed.timestamp = discord.utils.utcnow()
-        await log_channel.send(embed=embed)
+        try:
+            embed.timestamp = discord.utils.utcnow()
+            await log_channel.send(embed=embed)
+        except discord.Forbidden:
+            print("🚨 LOG ERROR: Missing 'Send Messages' or 'Embed Links' permissions in the log channel.")
+        except Exception as e:
+            print(f"🚨 LOG ERROR: {e}")
+    else:
+        print(f"🚨 LOG ERROR: Cannot find channel ID {LOG_CHANNEL_ID}. Ensure it is correct and the bot has 'View Channel' permission.")
 
 @bot.event
 async def on_message_delete(message):
@@ -243,8 +250,9 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
+# 🚨 FIXED: Changed from @bot.event so slash commands aren't killed
+@bot.listen("on_interaction")
+async def custom_interaction_handler(interaction: discord.Interaction):
     if interaction.type == discord.InteractionType.component:
         cid = interaction.data.get("custom_id", "")
         if cid.startswith("tix_"):
@@ -310,13 +318,14 @@ async def slow(ctx, seconds: int):
     await ctx.channel.edit(slowmode_delay=seconds)
     await ctx.send(f"Slowmode set to {seconds} seconds.")
 
+# 🚨 FIXED: Removed ephemeral=True so it works as a prefix command
 @bot.hybrid_command(name="setstatus", description="Update bot presence. (Admin Only)")
 @app_commands.choices(status=[app_commands.Choice(name="Online", value="online"), app_commands.Choice(name="Idle", value="idle"), app_commands.Choice(name="DND", value="dnd")])
 @commands.has_permissions(administrator=True)
 async def setstatus(ctx, status: str, *, text: str = "Monitoring systems."):
     s_map = {"online": discord.Status.online, "idle": discord.Status.idle, "dnd": discord.Status.dnd}
     await bot.change_presence(status=s_map.get(status.lower(), discord.Status.online), activity=discord.Game(name=text))
-    await ctx.send("Presence updated.", ephemeral=True)
+    await ctx.send("Presence updated.")
 
 @bot.hybrid_command(name="panel", description="Deploy the support ticket panel. (Admin Only)")
 @commands.has_permissions(administrator=True)
@@ -328,7 +337,10 @@ async def panel(ctx):
 @commands.has_permissions(administrator=True)
 async def accesspanel(ctx):
     embed = discord.Embed(title="Communications Access Control", description="Select roles to grant permission for /dm and /announce.", color=EMBED_COLOR)
-    await ctx.send(embed=embed, view=AccessPanelView(), ephemeral=True)
+    if ctx.interaction:
+        await ctx.send(embed=embed, view=AccessPanelView(), ephemeral=True)
+    else:
+        await ctx.send(embed=embed, view=AccessPanelView())
 
 @bot.hybrid_command(name="add_response", description="Add an auto-responder trigger. (Admin Only)")
 @commands.has_permissions(administrator=True)
