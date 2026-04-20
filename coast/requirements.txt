@@ -1,8 +1,8 @@
 
-discord.py==2.3.2
-Flask
-python-dotenv==1.0.0
-uvloop
-PyNacl
+discord.py
+flask
 waitress
+python-dotenv
 requests
+yt-dlp
+PyNaCl
