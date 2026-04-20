@@ -435,7 +435,7 @@ async def help(ctx):
 async def on_ready():
     if not internal_self_ping.is_running(): internal_self_ping.start()
     bot.add_view(TicketChannelView())
-    await bot.tree.sync()
+    # await bot.tree.sync()
     print("System initialization complete. Coastguard is active.")
 
 if __name__ == "__main__":
