@@ -414,7 +414,8 @@ async def play(ctx, url: str):
         await ctx.send(f"Now playing: **{player.title}**")
     except Exception as e:
         print(f"MUSIC CRASH: {e}")
-        await ctx.send("Failed to play track. Make sure it is a valid link and FFmpeg is installed.")
+        # 🚨 THE MAGIC FIX: This prints the exact crash reason in Discord!
+        await ctx.send(f"🚨 **Crash Error:** `{str(e)}`")
 
 @bot.hybrid_command(name="skip", description="Skip the current song.")
 async def skip(ctx):
