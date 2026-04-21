@@ -45,6 +45,7 @@ sticky_messages = {}
 auto_responses = {} 
 auto_reactions = {} 
 privileged_roles = set() 
+music_queues = defaultdict(list) # Added for the queue system
 
 bot = commands.Bot(command_prefix="?", intents=INTENTS, help_command=None)
 
@@ -92,6 +93,21 @@ class YTDLSource(discord.PCMVolumeTransformer):
         filename = data['url'] if stream else ytdl.prepare_filename(data)
         
         return cls(discord.FFmpegPCMAudio(filename, executable=FFMPEG_EXECUTABLE, **ffmpeg_options), data=data)
+
+# Helper functions for the queue
+def play_next(ctx):
+    if ctx.guild.id in music_queues and len(music_queues[ctx.guild.id]) > 0:
+        url = music_queues[ctx.guild.id].pop(0)
+        asyncio.run_coroutine_threadsafe(play_queue(ctx, url), bot.loop)
+
+async def play_queue(ctx, url):
+    try:
+        player = await YTDLSource.from_url(url, loop=bot.loop, stream=True)
+        ctx.voice_client.play(player, after=lambda e: play_next(ctx))
+        await ctx.send(f"Now playing from queue: **{player.title}**")
+    except Exception as e:
+        print(f"MUSIC CRASH: {e}")
+        play_next(ctx) # Skip to next song if this one breaks
 
 # ==========================================
 # UI CLASSES (Tickets & Access Panel)
@@ -362,7 +378,8 @@ async def announce(ctx, channel: discord.TextChannel, *, message: str):
 @commands.has_permissions(administrator=True)
 async def dm(ctx, user: discord.Member, *, message: str):
     try:
-        await user.send(f"Message from administration: {message}")
+        # Added the Admin's name dynamically to the message
+        await user.send(f"Message from Admin {ctx.author.name}: {message}")
         await ctx.send(f"Direct message delivered to {user.name}.", ephemeral=True)
     except discord.Forbidden:
         await ctx.send("Could not deliver message. The user has DMs disabled.", ephemeral=True)
@@ -381,20 +398,38 @@ async def play(ctx, url: str):
     if not ctx.voice_client: 
         await channel.connect()
     
+    # If currently playing, add to queue instead
+    if ctx.voice_client.is_playing():
+        music_queues[ctx.guild.id].append(url)
+        return await ctx.send(f"Added to queue. Position: {len(music_queues[ctx.guild.id])}")
+    
     try:
         player = await YTDLSource.from_url(url, loop=bot.loop, stream=True)
-        ctx.voice_client.play(player, after=lambda e: print(f'Player error: {e}') if e else None)
+        ctx.voice_client.play(player, after=lambda e: play_next(ctx))
         await ctx.send(f"Now playing: **{player.title}**")
     except Exception as e:
         print(f"MUSIC CRASH: {e}")
         await ctx.send("Failed to play track. Make sure it is a valid link and FFmpeg is installed.")
 
-@bot.hybrid_command(name="stop", description="Stop music and disconnect the bot.")
+@bot.hybrid_command(name="skip", description="Skip the current song.")
+async def skip(ctx):
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.stop() # Stopping triggers the 'after' callback, moving to the next song automatically
+        await ctx.send("Song skipped.")
+    else:
+        await ctx.send("No music is currently playing.")
+
+@bot.hybrid_command(name="stop", description="Stop music, clear queue, and disconnect.")
 async def stop(ctx):
     await ctx.defer()
+    
+    # Clear the queue so it doesn't resume when reconnecting
+    if ctx.guild.id in music_queues:
+        music_queues[ctx.guild.id].clear()
+        
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
-        await ctx.send("Playback stopped and disconnected.")
+        await ctx.send("Playback stopped, queue cleared, and disconnected.")
     else:
         await ctx.send("I am not connected to a voice channel.")
 
@@ -428,7 +463,7 @@ async def help(ctx):
     e.add_field(name="Moderation (Restricted)", value="`kick`, `ban`, `mute`, `unmute`, `clear`, `slow`", inline=False)
     e.add_field(name="Configuration (Restricted)", value="`setstatus`, `panel`, `accesspanel`, `add_response`, `add_reaction`", inline=False)
     e.add_field(name="Communications", value="`announce`, `dm` (Requires authorization/Admin)", inline=False)
-    e.add_field(name="Media", value="`play`, `stop`", inline=False)
+    e.add_field(name="Media", value="`play`, `stop`, `skip`", inline=False)
     e.add_field(name="General", value="`rank`, `userinfo`, `help`", inline=False)
     await ctx.send(embed=e)
 
