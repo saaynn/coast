@@ -29,8 +29,8 @@ INTENTS.presences = True
 # CONFIGURATION & MEMORY
 # ==========================================
 EMBED_COLOR = 0xbebbd0
-LOG_CHANNEL_ID = 1492512166090248293 
-TARGET_VC_ID = 1385261169924902972  
+LOG_CHANNEL_ID = 1492512166090248293
+TARGET_VC_ID = 1385261169924902972
 URL = "https://coast-d9he.onrender.com/"
 
 # Trackers
@@ -42,9 +42,9 @@ temp_vcs = set()
 sticky_messages = {}
 
 # Dynamic Systems Memory
-auto_responses = {} 
-auto_reactions = {} 
-privileged_roles = set() 
+auto_responses = {}
+auto_reactions = {}
+privileged_roles = set()
 music_queues = defaultdict(list) # Added for the queue system
 
 bot = commands.Bot(command_prefix="?", intents=INTENTS, help_command=None)
@@ -73,7 +73,12 @@ async def internal_self_ping():
 # ==========================================
 yt_dlp.utils.bug_reports_message = lambda: ''
 ytdl_format_options = {'format': 'bestaudio/best', 'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s', 'restrictfilenames': True, 'noplaylist': True, 'nocheckcertificate': True, 'ignoreerrors': False, 'logtostderr': False, 'quiet': True, 'no_warnings': True, 'default_search': 'auto', 'source_address': '0.0.0.0'}
-ffmpeg_options = {'options': '-vn'}
+
+# APPLIED FFMPEG RECONNECT FIX HERE
+ffmpeg_options = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn'
+}
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
 FFMPEG_EXECUTABLE = './ffmpeg' if os.path.exists('./ffmpeg') else 'ffmpeg'
