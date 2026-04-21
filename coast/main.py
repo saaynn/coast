@@ -75,6 +75,8 @@ ytdl_format_options = {'format': 'bestaudio/best', 'outtmpl': '%(extractor)s-%(i
 ffmpeg_options = {'options': '-vn'}
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
+FFMPEG_EXECUTABLE = './ffmpeg' if os.path.exists('./ffmpeg') else 'ffmpeg'
+
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
         super().__init__(source, volume)
@@ -88,7 +90,8 @@ class YTDLSource(discord.PCMVolumeTransformer):
         data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
         if 'entries' in data: data = data['entries'][0]
         filename = data['url'] if stream else ytdl.prepare_filename(data)
-        return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+        
+        return cls(discord.FFmpegPCMAudio(filename, executable=FFMPEG_EXECUTABLE, **ffmpeg_options), data=data)
 
 # ==========================================
 # UI CLASSES (Tickets & Access Panel)
@@ -131,7 +134,7 @@ class TicketPanelModal(ui.Modal, title="Setup Ticket Panel"):
 
 class AccessSelect(ui.RoleSelect):
     def __init__(self):
-        super().__init__(placeholder="Select roles to grant DM/Announce access", min_values=1, max_values=5)
+        super().__init__(placeholder="Select roles to grant Announce access", min_values=1, max_values=5)
     async def callback(self, interaction: discord.Interaction):
         for role in self.values:
             privileged_roles.add(role.id)
@@ -143,7 +146,6 @@ class AccessPanelView(ui.View):
         super().__init__()
         self.add_item(AccessSelect())
 
-# Helper function to check DM/Announce permissions
 def has_comm_access(user: discord.Member):
     if user.guild_permissions.administrator: return True
     user_roles = [r.id for r in user.roles]
@@ -159,11 +161,11 @@ async def send_log(guild, embed):
             embed.timestamp = discord.utils.utcnow()
             await log_channel.send(embed=embed)
         except discord.Forbidden:
-            print("🚨 LOG ERROR: Missing 'Send Messages' or 'Embed Links' permissions in the log channel.")
+            print("LOG ERROR: Missing 'Send Messages' or 'Embed Links' permissions in the log channel.")
         except Exception as e:
-            print(f"🚨 LOG ERROR: {e}")
+            print(f"LOG ERROR: {e}")
     else:
-        print(f"🚨 LOG ERROR: Cannot find channel ID {LOG_CHANNEL_ID}. Ensure it is correct and the bot has 'View Channel' permission.")
+        print(f"LOG ERROR: Cannot find channel ID {LOG_CHANNEL_ID}. Ensure it is correct and the bot has 'View Channel' permission.")
 
 @bot.event
 async def on_message_delete(message):
@@ -203,21 +205,18 @@ async def on_member_remove(member):
 async def on_message(message):
     if message.author.bot or not message.guild: return
     
-    # Message Counter & XP
     message_counts[message.author.id] += 1
     uid = message.author.id
     if uid not in xp_cooldown or (time.time() - xp_cooldown[uid]) > 60:
         user_xp[uid] = user_xp.get(uid, 0) + random.randint(15, 25)
         xp_cooldown[uid] = time.time()
 
-    # Link Blocker
     content_lower = message.content.lower()
     if ("http://" in content_lower or "https://" in content_lower or "www." in content_lower):
         if not message.author.guild_permissions.administrator:
             await message.delete()
             return await message.channel.send(f"{message.author.mention}, unauthorized links are not permitted.", delete_after=5)
 
-    # Auto-React & Auto-Respond
     for trigger, emoji in auto_reactions.items():
         if trigger in content_lower:
             try: await message.add_reaction(emoji)
@@ -227,7 +226,6 @@ async def on_message(message):
         if trigger in content_lower:
             await message.channel.send(response)
 
-    # Sticky Messages
     if message.channel.id in sticky_messages:
         data = sticky_messages[message.channel.id]
         if message.id != data["last_id"]:
@@ -238,7 +236,6 @@ async def on_message(message):
             new = await message.channel.send(embed=discord.Embed(description=data["content"], color=EMBED_COLOR))
             sticky_messages[message.channel.id]["last_id"] = new.id
 
-    # Anti-Spam
     now = time.time()
     spam_tracker[uid].append(now)
     spam_tracker[uid] = [t for t in spam_tracker[uid] if now - t <= 2.0]
@@ -250,7 +247,6 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-# 🚨 FIXED: Changed from @bot.event so slash commands aren't killed
 @bot.listen("on_interaction")
 async def custom_interaction_handler(interaction: discord.Interaction):
     if interaction.type == discord.InteractionType.component:
@@ -318,7 +314,6 @@ async def slow(ctx, seconds: int):
     await ctx.channel.edit(slowmode_delay=seconds)
     await ctx.send(f"Slowmode set to {seconds} seconds.")
 
-# 🚨 FIXED: Removed ephemeral=True so it works as a prefix command
 @bot.hybrid_command(name="setstatus", description="Update bot presence. (Admin Only)")
 @app_commands.choices(status=[app_commands.Choice(name="Online", value="online"), app_commands.Choice(name="Idle", value="idle"), app_commands.Choice(name="DND", value="dnd")])
 @commands.has_permissions(administrator=True)
@@ -333,10 +328,10 @@ async def panel(ctx):
     if ctx.interaction: await ctx.interaction.response.send_modal(TicketPanelModal())
     else: await ctx.send("Execute this command via slash command (/panel).")
 
-@bot.hybrid_command(name="accesspanel", description="Configure roles allowed to use DM and Announce. (Admin Only)")
+@bot.hybrid_command(name="accesspanel", description="Configure roles allowed to use Announce. (Admin Only)")
 @commands.has_permissions(administrator=True)
 async def accesspanel(ctx):
-    embed = discord.Embed(title="Communications Access Control", description="Select roles to grant permission for /dm and /announce.", color=EMBED_COLOR)
+    embed = discord.Embed(title="Communications Access Control", description="Select roles to grant permission for /announce.", color=EMBED_COLOR)
     if ctx.interaction:
         await ctx.send(embed=embed, view=AccessPanelView(), ephemeral=True)
     else:
@@ -363,9 +358,9 @@ async def announce(ctx, channel: discord.TextChannel, *, message: str):
     await channel.send(message)
     await ctx.send(f"Announcement sent to {channel.mention}.", ephemeral=True)
 
-@bot.hybrid_command(name="dm", description="Send a direct message to a user.")
+@bot.hybrid_command(name="dm", description="Send a direct message to a user. (Admin Only)")
+@commands.has_permissions(administrator=True)
 async def dm(ctx, user: discord.Member, *, message: str):
-    if not has_comm_access(ctx.author): return await ctx.send("You lack authorization to use this command.", ephemeral=True)
     try:
         await user.send(f"Message from administration: {message}")
         await ctx.send(f"Direct message delivered to {user.name}.", ephemeral=True)
@@ -377,22 +372,31 @@ async def dm(ctx, user: discord.Member, *, message: str):
 # ==========================================
 @bot.hybrid_command(name="play", description="Play audio from a YouTube link.")
 async def play(ctx, url: str):
-    if not ctx.message.author.voice: return await ctx.send("You are not connected to a voice channel.")
-    channel = ctx.message.author.voice.channel
-    if not ctx.voice_client: await channel.connect()
+    await ctx.defer()
     
-    async with ctx.typing():
+    if not ctx.author.voice: 
+        return await ctx.send("You must be connected to a voice channel first.")
+        
+    channel = ctx.author.voice.channel
+    if not ctx.voice_client: 
+        await channel.connect()
+    
+    try:
         player = await YTDLSource.from_url(url, loop=bot.loop, stream=True)
         ctx.voice_client.play(player, after=lambda e: print(f'Player error: {e}') if e else None)
-    await ctx.send(f"Now playing: {player.title}")
+        await ctx.send(f"Now playing: **{player.title}**")
+    except Exception as e:
+        print(f"MUSIC CRASH: {e}")
+        await ctx.send("Failed to play track. Make sure it is a valid link and FFmpeg is installed.")
 
 @bot.hybrid_command(name="stop", description="Stop music and disconnect the bot.")
 async def stop(ctx):
+    await ctx.defer()
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
         await ctx.send("Playback stopped and disconnected.")
     else:
-        await ctx.send("The bot is not connected to a voice channel.")
+        await ctx.send("I am not connected to a voice channel.")
 
 # ==========================================
 # GENERAL UTILITY COMMANDS (Everyone)
@@ -423,7 +427,7 @@ async def help(ctx):
     e = discord.Embed(title="System Commands", color=EMBED_COLOR)
     e.add_field(name="Moderation (Restricted)", value="`kick`, `ban`, `mute`, `unmute`, `clear`, `slow`", inline=False)
     e.add_field(name="Configuration (Restricted)", value="`setstatus`, `panel`, `accesspanel`, `add_response`, `add_reaction`", inline=False)
-    e.add_field(name="Communications", value="`announce`, `dm` (Requires authorization)", inline=False)
+    e.add_field(name="Communications", value="`announce`, `dm` (Requires authorization/Admin)", inline=False)
     e.add_field(name="Media", value="`play`, `stop`", inline=False)
     e.add_field(name="General", value="`rank`, `userinfo`, `help`", inline=False)
     await ctx.send(embed=e)
