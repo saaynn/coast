@@ -71,7 +71,8 @@ async def internal_self_ping():
 # ==========================================
 # MUSIC SYSTEM CONFIG
 # ==========================================
-yt_dlp.utils.bug_reports_message = lambda: ''
+# 🚨 THE FIX IS HERE: Made the lambda accept any arguments
+yt_dlp.utils.bug_reports_message = lambda *args, **kwargs: ''
 ytdl_format_options = {'format': 'bestaudio/best', 'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s', 'restrictfilenames': True, 'noplaylist': True, 'nocheckcertificate': True, 'ignoreerrors': False, 'logtostderr': False, 'quiet': True, 'no_warnings': True, 'default_search': 'auto', 'source_address': '0.0.0.0'}
 
 # APPLIED FFMPEG RECONNECT FIX HERE
@@ -414,7 +415,7 @@ async def play(ctx, url: str):
         await ctx.send(f"Now playing: **{player.title}**")
     except Exception as e:
         print(f"MUSIC CRASH: {e}")
-        # 🚨 THE MAGIC FIX: This prints the exact crash reason in Discord!
+        # This prints the exact crash reason in Discord!
         await ctx.send(f"🚨 **Crash Error:** `{str(e)}`")
 
 @bot.hybrid_command(name="skip", description="Skip the current song.")
