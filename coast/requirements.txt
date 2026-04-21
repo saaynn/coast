@@ -1,8 +1,7 @@
 
-discord.py
+discord.py[voice]
 flask
 waitress
 python-dotenv
 requests
 yt-dlp
-PyNaCl
