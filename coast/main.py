@@ -207,7 +207,7 @@ class TicketSelectMenu(ui.Select):
         super().__init__(placeholder="Select a category to open a ticket...", min_values=1, max_values=1, custom_id="ticket_category_select", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        category = interaction.guild.get_channel(self.category_id) if self.category_id else None
+        category = interaction.guild.get_channel(1495127972527476897) if self.category_id else None
         topic_name = self.values[0].lower().replace(" / ", "-").replace(" ", "-")
         
         overwrites = {
