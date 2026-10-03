@@ -8,6 +8,7 @@ import math
 import random
 import asyncio
 import requests
+import datetime
 from collections import defaultdict
 from dotenv import load_dotenv
 from flask import Flask
@@ -45,7 +46,7 @@ sticky_messages = {}
 auto_responses = {}
 auto_reactions = {}
 privileged_roles = set()
-music_queues = defaultdict(list) # Added for the queue system
+music_queues = defaultdict(list)
 
 bot = commands.Bot(command_prefix="?", intents=INTENTS, help_command=None)
 
@@ -71,11 +72,21 @@ async def internal_self_ping():
 # ==========================================
 # MUSIC SYSTEM CONFIG
 # ==========================================
-# 🚨 THE FIX IS HERE: Made the lambda accept any arguments
 yt_dlp.utils.bug_reports_message = lambda *args, **kwargs: ''
-ytdl_format_options = {'format': 'bestaudio/best', 'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s', 'restrictfilenames': True, 'noplaylist': True, 'nocheckcertificate': True, 'ignoreerrors': False, 'logtostderr': False, 'quiet': True, 'no_warnings': True, 'default_search': 'auto', 'source_address': '0.0.0.0'}
+ytdl_format_options = {
+    'format': 'bestaudio/best',
+    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+    'restrictfilenames': True,
+    'noplaylist': True,
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'logtostderr': False,
+    'quiet': True,
+    'no_warnings': True,
+    'default_search': 'auto',
+    'source_address': '0.0.0.0'
+}
 
-# APPLIED FFMPEG RECONNECT FIX HERE
 ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
@@ -100,7 +111,6 @@ class YTDLSource(discord.PCMVolumeTransformer):
         
         return cls(discord.FFmpegPCMAudio(filename, executable=FFMPEG_EXECUTABLE, **ffmpeg_options), data=data)
 
-# Helper functions for the queue
 def play_next(ctx):
     if ctx.guild.id in music_queues and len(music_queues[ctx.guild.id]) > 0:
         url = music_queues[ctx.guild.id].pop(0)
@@ -113,46 +123,119 @@ async def play_queue(ctx, url):
         await ctx.send(f"Now playing from queue: **{player.title}**")
     except Exception as e:
         print(f"MUSIC CRASH: {e}")
-        play_next(ctx) # Skip to next song if this one breaks
+        play_next(ctx)
 
 # ==========================================
-# UI CLASSES (Tickets & Access Panel)
+# REWORKED TICKET SYSTEM
 # ==========================================
 class TicketChannelView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @ui.button(label="Close", style=discord.ButtonStyle.danger, custom_id="close_ticket")
-    async def close_ticket(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_message("Closing ticket in 2 seconds.")
-        await asyncio.sleep(2)
-        await interaction.channel.delete()
-
-    @ui.button(label="Claim", style=discord.ButtonStyle.success, custom_id="claim_ticket")
+    @ui.button(label="Claim Ticket", style=discord.ButtonStyle.success, emoji="✋", custom_id="claim_ticket")
     async def claim_ticket(self, interaction: discord.Interaction, button: ui.Button):
         if not interaction.user.guild_permissions.manage_messages:
             return await interaction.response.send_message("Access denied. Staff only.", ephemeral=True)
-        await interaction.response.send_message(f"Ticket claimed by {interaction.user.mention}.")
+        
         button.disabled = True
+        button.label = f"Claimed by {interaction.user.name}"
         await interaction.message.edit(view=self)
+        
+        embed = discord.Embed(
+            description=f"🎫 Ticket has been claimed by {interaction.user.mention}.",
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed)
 
-    @ui.button(label="Lock", style=discord.ButtonStyle.secondary, custom_id="lock_ticket")
+    @ui.button(label="Lock Ticket", style=discord.ButtonStyle.secondary, emoji="🔒", custom_id="lock_ticket")
     async def lock_ticket(self, interaction: discord.Interaction, button: ui.Button):
         if not interaction.user.guild_permissions.manage_channels:
             return await interaction.response.send_message("Access denied. Staff only.", ephemeral=True)
+        
         overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
         overwrite.send_messages = False
         await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
-        await interaction.response.send_message("Ticket has been locked.")
+        
+        embed = discord.Embed(description="🔒 Ticket has been locked. Only staff can send messages.", color=discord.Color.orange())
+        await interaction.response.send_message(embed=embed)
 
-class TicketPanelModal(ui.Modal, title="Setup Ticket Panel"):
-    category_id = ui.TextInput(label="Category ID")
-    async def on_submit(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="Support", description="Click below to open a ticket.", color=EMBED_COLOR)
-        view = ui.View(timeout=None)
-        view.add_item(ui.Button(label="Open Ticket", style=discord.ButtonStyle.primary, custom_id=f"tix_{self.category_id.value}"))
-        await interaction.channel.send(embed=embed, view=view)
-        await interaction.response.send_message("Ticket panel deployed.", ephemeral=True)
+    @ui.button(label="Unlock Ticket", style=discord.ButtonStyle.secondary, emoji="🔓", custom_id="unlock_ticket")
+    async def unlock_ticket(self, interaction: discord.Interaction, button: ui.Button):
+        if not interaction.user.guild_permissions.manage_channels:
+            return await interaction.response.send_message("Access denied. Staff only.", ephemeral=True)
+        
+        overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
+        overwrite.send_messages = None
+        await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
+        
+        embed = discord.Embed(description="🔓 Ticket has been unlocked.", color=discord.Color.green())
+        await interaction.response.send_message(embed=embed)
+
+    @ui.button(label="Close & Delete", style=discord.ButtonStyle.danger, emoji="⛔", custom_id="close_ticket")
+    async def close_ticket(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.send_message("Closing ticket and saving transcript in 5 seconds...")
+        
+        # Save simple chat transcript to log channel
+        messages = [msg async for msg in interaction.channel.history(limit=100, oldest_first=True)]
+        transcript_text = "\n".join([f"[{m.created_at.strftime('%Y-%m-%d %H:%M')}] {m.author}: {m.content}" for m in messages])
+        
+        log_embed = discord.Embed(
+            title="Ticket Transcript Logged",
+            description=f"**Ticket:** {interaction.channel.name}\n**Closed By:** {interaction.user.mention}",
+            color=discord.Color.red()
+        )
+        
+        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID) or bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            if transcript_text:
+                file_data = discord.File(fp=requests.adapters.io.BytesIO(transcript_text.encode()), filename=f"{interaction.channel.name}-transcript.txt")
+                await log_channel.send(embed=log_embed, file=file_data)
+            else:
+                await log_channel.send(embed=log_embed)
+
+        await asyncio.sleep(5)
+        await interaction.channel.delete()
+
+class TicketSelectMenu(ui.Select):
+    def __init__(self, category_id: int = None):
+        self.category_id = category_id
+        options = [
+            discord.SelectOption(label="General Support", description="Ask general questions or request help.", emoji="❓"),
+            discord.SelectOption(label="Report / Moderation", description="Report a user or rule violation.", emoji="🛡️"),
+            discord.SelectOption(label="Billing / Access", description="Issues with roles, access, or purchases.", emoji="💳"),
+        ]
+        super().__init__(placeholder="Select a category to open a ticket...", min_values=1, max_values=1, custom_id="ticket_category_select", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        category = interaction.guild.get_channel(self.category_id) if self.category_id else None
+        topic_name = self.values[0].lower().replace(" / ", "-").replace(" ", "-")
+        
+        overwrites = {
+            interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True),
+            interaction.guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True)
+        }
+        
+        chan = await interaction.guild.create_text_channel(
+            name=f"ticket-{topic_name}-{interaction.user.name}",
+            category=category,
+            overwrites=overwrites
+        )
+        
+        embed = discord.Embed(
+            title=f"Support Ticket - {self.values[0]}",
+            description=f"Welcome {interaction.user.mention}!\nStaff will be with you shortly. Please explain your issue in detail below.",
+            color=EMBED_COLOR
+        )
+        embed.set_footer(text="Use the control buttons below to manage this ticket.")
+        
+        await chan.send(embed=embed, view=TicketChannelView())
+        await interaction.response.send_message(f"Ticket opened: {chan.mention}", ephemeral=True)
+
+class TicketPanelView(ui.View):
+    def __init__(self, category_id: int = None):
+        super().__init__(timeout=None)
+        self.add_item(TicketSelectMenu(category_id=category_id))
 
 class AccessSelect(ui.RoleSelect):
     def __init__(self):
@@ -174,7 +257,7 @@ def has_comm_access(user: discord.Member):
     return any(r in privileged_roles for r in user_roles)
 
 # ==========================================
-# LOGGING SYSTEM (Upgraded Diagnostics)
+# LOGGING SYSTEM
 # ==========================================
 async def send_log(guild, embed):
     log_channel = guild.get_channel(LOG_CHANNEL_ID) or bot.get_channel(LOG_CHANNEL_ID)
@@ -183,11 +266,9 @@ async def send_log(guild, embed):
             embed.timestamp = discord.utils.utcnow()
             await log_channel.send(embed=embed)
         except discord.Forbidden:
-            print("LOG ERROR: Missing 'Send Messages' or 'Embed Links' permissions in the log channel.")
+            print("LOG ERROR: Missing permissions in the log channel.")
         except Exception as e:
             print(f"LOG ERROR: {e}")
-    else:
-        print(f"LOG ERROR: Cannot find channel ID {LOG_CHANNEL_ID}. Ensure it is correct and the bot has 'View Channel' permission.")
 
 @bot.event
 async def on_message_delete(message):
@@ -221,7 +302,7 @@ async def on_member_remove(member):
     await send_log(member.guild, e)
 
 # ==========================================
-# EVENT LOGIC (Protection, Auto-Respond, Trackers)
+# EVENT LOGIC
 # ==========================================
 @bot.event
 async def on_message(message):
@@ -234,10 +315,6 @@ async def on_message(message):
         xp_cooldown[uid] = time.time()
 
     content_lower = message.content.lower()
-    if ("http://" in content_lower or "https://" in content_lower or "www." in content_lower):
-        if not message.author.guild_permissions.administrator:
-            await message.delete()
-            return await message.channel.send(f"{message.author.mention}, unauthorized links are not permitted.", delete_after=5)
 
     for trigger, emoji in auto_reactions.items():
         if trigger in content_lower:
@@ -268,18 +345,6 @@ async def on_message(message):
         return await message.channel.send(f"{message.author.mention} has been temporarily muted for spamming.", delete_after=10)
 
     await bot.process_commands(message)
-
-@bot.listen("on_interaction")
-async def custom_interaction_handler(interaction: discord.Interaction):
-    if interaction.type == discord.InteractionType.component:
-        cid = interaction.data.get("custom_id", "")
-        if cid.startswith("tix_"):
-            cat_id = int(cid.split("_")[1])
-            category = interaction.guild.get_channel(cat_id)
-            overwrites = {interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False), interaction.user: discord.PermissionOverwrite(view_channel=True)}
-            chan = await interaction.guild.create_text_channel(f"ticket-{interaction.user.name}", category=category, overwrites=overwrites)
-            await chan.send(f"{interaction.user.mention}", view=TicketChannelView())
-            await interaction.response.send_message(f"Ticket created: {chan.mention}", ephemeral=True)
 
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -346,9 +411,15 @@ async def setstatus(ctx, status: str, *, text: str = "Monitoring systems."):
 
 @bot.hybrid_command(name="panel", description="Deploy the support ticket panel. (Admin Only)")
 @commands.has_permissions(administrator=True)
-async def panel(ctx):
-    if ctx.interaction: await ctx.interaction.response.send_modal(TicketPanelModal())
-    else: await ctx.send("Execute this command via slash command (/panel).")
+async def panel(ctx, category_id: str = None):
+    cat_id = int(category_id) if category_id and category_id.isdigit() else None
+    embed = discord.Embed(
+        title="📩 Support Center",
+        description="Need assistance? Choose a topic from the dropdown menu below to open a private ticket channel with support.",
+        color=EMBED_COLOR
+    )
+    embed.set_footer(text="Coastguard Support System")
+    await ctx.send(embed=embed, view=TicketPanelView(category_id=cat_id))
 
 @bot.hybrid_command(name="accesspanel", description="Configure roles allowed to use Announce. (Admin Only)")
 @commands.has_permissions(administrator=True)
@@ -372,7 +443,7 @@ async def add_reaction(ctx, trigger: str, emoji: str):
     await ctx.send(f"Auto-reaction added for '{trigger}'.")
 
 # ==========================================
-# COMMUNICATION COMMANDS (Restricted Access)
+# COMMUNICATION COMMANDS
 # ==========================================
 @bot.hybrid_command(name="announce", description="Send an announcement to a channel.")
 async def announce(ctx, channel: discord.TextChannel, *, message: str):
@@ -384,7 +455,6 @@ async def announce(ctx, channel: discord.TextChannel, *, message: str):
 @commands.has_permissions(administrator=True)
 async def dm(ctx, user: discord.Member, *, message: str):
     try:
-        # Added the Admin's name dynamically to the message
         await user.send(f"Message from Admin {ctx.author.name}: {message}")
         await ctx.send(f"Direct message delivered to {user.name}.", ephemeral=True)
     except discord.Forbidden:
@@ -404,7 +474,6 @@ async def play(ctx, url: str):
     if not ctx.voice_client: 
         await channel.connect()
     
-    # If currently playing, add to queue instead
     if ctx.voice_client.is_playing():
         music_queues[ctx.guild.id].append(url)
         return await ctx.send(f"Added to queue. Position: {len(music_queues[ctx.guild.id])}")
@@ -415,13 +484,12 @@ async def play(ctx, url: str):
         await ctx.send(f"Now playing: **{player.title}**")
     except Exception as e:
         print(f"MUSIC CRASH: {e}")
-        # This prints the exact crash reason in Discord!
         await ctx.send(f"🚨 **Crash Error:** `{str(e)}`")
 
 @bot.hybrid_command(name="skip", description="Skip the current song.")
 async def skip(ctx):
     if ctx.voice_client and ctx.voice_client.is_playing():
-        ctx.voice_client.stop() # Stopping triggers the 'after' callback, moving to the next song automatically
+        ctx.voice_client.stop()
         await ctx.send("Song skipped.")
     else:
         await ctx.send("No music is currently playing.")
@@ -430,7 +498,6 @@ async def skip(ctx):
 async def stop(ctx):
     await ctx.defer()
     
-    # Clear the queue so it doesn't resume when reconnecting
     if ctx.guild.id in music_queues:
         music_queues[ctx.guild.id].clear()
         
@@ -441,7 +508,7 @@ async def stop(ctx):
         await ctx.send("I am not connected to a voice channel.")
 
 # ==========================================
-# GENERAL UTILITY COMMANDS (Everyone)
+# GENERAL UTILITY COMMANDS
 # ==========================================
 @bot.hybrid_command(name="userinfo", description="Display detailed information about a user.")
 async def userinfo(ctx, member: discord.Member = None):
@@ -481,7 +548,7 @@ async def help(ctx):
 async def on_ready():
     if not internal_self_ping.is_running(): internal_self_ping.start()
     bot.add_view(TicketChannelView())
-    # await bot.tree.sync()
+    bot.add_view(TicketPanelView())
     print("System initialization complete. Coastguard is active.")
 
 if __name__ == "__main__":
